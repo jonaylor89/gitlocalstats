@@ -36,4 +36,4 @@ or just alias the command because it's long
 ~$ gls
 ```
 
-
+[demo](screenshots/demo.png)
