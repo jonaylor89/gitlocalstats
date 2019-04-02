@@ -34,9 +34,9 @@ since it's a long command I recommend aliasing it or copying it to some bin/ dir
 
 ```sh
 ~$ mkdir ~/bin 
-~$ PATH='$HOME/bin:$PATH'
+~$ PATH="$HOME/bin:$PATH"
 ~$ mv gitlocalstats ~/bin/gitlocalstats
-~$ alias gls='gitlocalstats'
+~$ alias gls="gitlocalstats"
 ~$ gls
 ```
 
