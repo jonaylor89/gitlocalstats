@@ -20,6 +20,14 @@ struct Cli {
     /// Email to filter by
     #[arg(short, long)]
     email: Option<String>,
+
+    /// Force a rescan of the filesystem (ignoring cache)
+    #[arg(short, long)]
+    rescan: bool,
+
+    /// Enable verbose logging of timing performance
+    #[arg(short, long)]
+    verbose: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -32,6 +40,10 @@ fn main() -> anyhow::Result<()> {
     let home_dir = user_dirs.home_dir();
     let config_dir = home_dir.join(".config").join("gitlocalstats");
     let config_path = config_dir.join("config");
+    
+    // Cache setup
+    let cache_dir = home_dir.join(".cache").join("gitlocalstats");
+    let cache_path = cache_dir.join("repos.json");
 
     if !config_path.exists() {
         if let Some(parent) = config_path.parent() {
@@ -68,14 +80,27 @@ fn main() -> anyhow::Result<()> {
     );
 
     // Step 1: Scan
-    let repos = scanner::scan(folder_path.to_str().unwrap());
-    // println!("Found {} repositories.", repos.len());
+    let step_start = Instant::now();
+    let cache_arg = if cli.rescan { None } else { Some(&cache_path) };
+    let repos = scanner::scan(folder_path.to_str().unwrap(), cache_arg);
+    if cli.verbose {
+        println!("[Perf] Scan/Cache Load: {:.2?}", step_start.elapsed());
+        println!("[Info] Processing {} repositories", repos.len());
+    }
 
     // Step 2: Stats
+    let step_start = Instant::now();
     let commit_counts = stats::process_repositories(repos, &email);
+    if cli.verbose {
+        println!("[Perf] Stats Processing: {:.2?}", step_start.elapsed());
+    }
 
     // Step 3: UI
+    let step_start = Instant::now();
     ui::print_stats(&commit_counts);
+    if cli.verbose {
+        println!("[Perf] UI Rendering: {:.2?}", step_start.elapsed());
+    }
 
     let duration = start_time.elapsed();
     println!("\nDone in {:.2?}", duration);

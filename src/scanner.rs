@@ -1,36 +1,63 @@
-use std::path::PathBuf;
+use ignore::WalkBuilder;
 use std::collections::HashSet;
-use walkdir::{DirEntry, WalkDir};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::fs::File;
+use std::io::BufReader;
 
-pub fn scan(root: &str) -> Vec<PathBuf> {
-    let mut repos = HashSet::new();
+pub fn scan(root: &str, cache_file: Option<&PathBuf>) -> Vec<PathBuf> {
+    if let Some(path) = cache_file
+        && path.exists()
+             && let Ok(file) = File::open(path) {
+                 let reader = BufReader::new(file);
+                 if let Ok(repos) = serde_json::from_reader::<_, Vec<PathBuf>>(reader) {
+                     return repos;
+                 }
+             }
 
-    let walker = WalkDir::new(root).follow_links(true).into_iter();
+    let repos = Arc::new(Mutex::new(HashSet::new()));
+    let repos_clone = repos.clone();
 
-    for entry in walker.filter_entry(|e| !is_ignored(e)).flatten() {
-        if !is_repo_marker(&entry) {
-            continue;
+    WalkBuilder::new(root)
+        .threads(num_cpus::get())
+        .follow_links(true)
+        .standard_filters(false) // Don't respect gitignore for the repo search itself, we want to find repos!
+        .hidden(false) // We need to see .git
+        .filter_entry(|e| !is_ignored(e.file_name().to_str().unwrap_or("")))
+        .build_parallel()
+        .run(move || {
+            let repos = repos_clone.clone();
+            Box::new(move |entry| {
+                if let Ok(entry) = entry
+                    && is_repo_marker(entry.file_name().to_str().unwrap_or(""), entry.file_type())
+                        && let Some(parent) = entry.path().parent() {
+                            repos.lock().unwrap().insert(parent.to_path_buf());
+                        }
+                ignore::WalkState::Continue
+            })
+        });
+
+    let set = Arc::try_unwrap(repos).unwrap().into_inner().unwrap();
+    let result: Vec<PathBuf> = set.into_iter().collect();
+
+    if let Some(path) = cache_file {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
         }
-        if let Some(parent) = entry.path().parent() {
-            repos.insert(parent.to_path_buf());
+        if let Ok(file) = File::create(path) {
+            let _ = serde_json::to_writer(file, &result);
         }
     }
 
-    repos.into_iter().collect()
+    result
 }
 
-fn is_ignored(entry: &DirEntry) -> bool {
-    entry
-        .file_name()
-        .to_str()
-        .map(|s| s == "node_modules" || s == "vendor")
-        .unwrap_or(false)
+fn is_ignored(name: &str) -> bool {
+    name == "node_modules" || name == "vendor"
 }
 
-fn is_repo_marker(entry: &DirEntry) -> bool {
-    let name = entry.file_name().to_str().unwrap_or("");
-    // We look for the directory itself, e.g. /path/to/repo/.git
-    (name == ".git" || name == ".jj") && entry.file_type().is_dir()
+fn is_repo_marker(name: &str, ft: Option<std::fs::FileType>) -> bool {
+    (name == ".git" || name == ".jj") && ft.is_some_and(|t| t.is_dir())
 }
 
 #[cfg(test)]

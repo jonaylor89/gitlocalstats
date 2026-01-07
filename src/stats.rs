@@ -3,7 +3,6 @@ use chrono::{DateTime, Duration, NaiveDate, Utc};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 // use gix::bstr::ByteSlice;
 
 // JJ imports - tentative based on common API patterns
@@ -17,36 +16,66 @@ pub type CommitCounts = HashMap<NaiveDate, i32>;
 const DAYS_IN_LAST_SIX_MONTHS: i64 = 183;
 
 pub fn process_repositories(repos: Vec<PathBuf>, email: &str) -> CommitCounts {
-    let global_stats = Arc::new(Mutex::new(HashMap::new()));
-
     // Convert email to bytes for gix comparison
     let email_bytes = email.as_bytes().to_vec();
 
-    repos.par_iter().for_each(|path| {
-        let mut repo_commits = HashMap::new();
+    repos
+        .par_iter()
+        .fold(
+            HashMap::new,
+            |mut acc: CommitCounts, path| {
+                let mut repo_commits = HashMap::new();
 
-        // Detect repo type
-        // Prioritize .git because jj often colocates .git and we can just read that via gix (fast)
-        let git_dir = path.join(".git");
-        let jj_dir = path.join(".jj");
+                // Detect repo type
+                let git_dir = path.join(".git");
+                let jj_dir = path.join(".jj");
 
-        if git_dir.exists() {
-            if let Err(_e) = process_git(path, &email_bytes, &mut repo_commits) {
-                // Silently ignore errors or log verbose?
-                // eprintln!("Error processing git repo {:?}: {}", path, _e);
-            }
-        } else if jj_dir.exists() && process_jj(path, email, &mut repo_commits).is_err() {
-            // eprintln!("Error processing jj repo {:?}: {}", path, _e);
-        }
+                let six_months_ago = std::time::SystemTime::now()
+                    .checked_sub(std::time::Duration::from_secs(
+                        DAYS_IN_LAST_SIX_MONTHS as u64 * 24 * 60 * 60,
+                    ))
+                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
 
-        // Merge into global
-        let mut global = global_stats.lock().unwrap();
-        for (date, count) in repo_commits {
-            *global.entry(date).or_insert(0) += count;
-        }
-    });
+                if git_dir.exists() {
+                    // Optimization: Check if HEAD has been modified recently
+                    if let Ok(metadata) = std::fs::metadata(git_dir.join("HEAD"))
+                        && let Ok(mtime) = metadata.modified()
+                            && mtime < six_months_ago {
+                                return acc; // Skip stale repo
+                            }
 
-    Arc::try_unwrap(global_stats).unwrap().into_inner().unwrap()
+                    if let Err(_e) = process_git(path, &email_bytes, &mut repo_commits) {
+                        // Silently ignore errors
+                    }
+                } else if jj_dir.exists() {
+                    // Optimization for JJ
+                    if let Ok(metadata) = std::fs::metadata(&jj_dir)
+                        && let Ok(mtime) = metadata.modified()
+                            && mtime < six_months_ago {
+                                return acc;
+                            }
+
+                    if process_jj(path, email, &mut repo_commits).is_err() {
+                        // Silently ignore errors
+                    }
+                }
+
+                // Merge local repo stats into the fold accumulator
+                for (date, count) in repo_commits {
+                    *acc.entry(date).or_insert(0) += count;
+                }
+                acc
+            },
+        )
+        .reduce(
+            HashMap::new,
+            |mut a, b| {
+                for (date, count) in b {
+                    *a.entry(date).or_insert(0) += count;
+                }
+                a
+            },
+        )
 }
 
 fn process_git(path: &Path, email: &[u8], commits: &mut CommitCounts) -> Result<()> {
@@ -68,10 +97,6 @@ fn process_git(path: &Path, email: &[u8], commits: &mut CommitCounts) -> Result<
         let commit = info.object()?;
         let author = commit.author()?;
 
-        if author.email != email {
-            continue;
-        }
-
         // Compiler indicates author.time is &str in this context/version
         let time_str: &str = author.time;
         let seconds = time_str
@@ -84,20 +109,19 @@ fn process_git(path: &Path, email: &[u8], commits: &mut CommitCounts) -> Result<
         let datetime =
             DateTime::from_timestamp(seconds, 0).ok_or_else(|| anyhow!("Invalid timestamp"))?;
 
-        let utc_date = datetime.date_naive();
-
         if datetime < cutoff_date {
-            // Optimization: Stop traversing if we are too far back?
-            // gix revwalk doesn't guarantee order unless specified, but usually it's chronological.
-            // If we want to be safe, we continue. If we sort by time, we can break.
-            // For now, just continue (filter).
+            // Optimization: Stop traversing if we are too far back.
+            // Git history is topologically sorted (parents come after children),
+            // so once we hit a date older than our window, we can safely stop.
+            break;
+        }
+
+        if author.email != email {
             continue;
         }
 
-        // Only count if within range
-        if datetime >= cutoff_date {
-            *commits.entry(utc_date).or_insert(0) += 1;
-        }
+        let utc_date = datetime.date_naive();
+        *commits.entry(utc_date).or_insert(0) += 1;
     }
 
     Ok(())
