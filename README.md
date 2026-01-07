@@ -1,43 +1,46 @@
-
 # GitLocalStats
 
---------------------
-
-# Dependencies & Building
-
-```sh
-~$ go get -u gopkg.in/src-d/go-git.v4/... # For git api
-~$ go get -u github.com/joho/godotenv     # For configuration
-~$ go build
-```
-
---------------------
-
-# Usage
-
-If you want to use this project, make sure there is a .gitlocalstats file in your home directory that contains
-your email and the path to your repos.
-
-```
-email=my-email
-folder=/path/to/repos
-```
-
-The project will recursively scan through the file system looking for git repos starting with the
-folder you specify in .gitlocalstats. 
-
-```sh
-~$ ./gitlocalstats
-```
-
-since it's a long command I recommend aliasing it or copying it to some bin/ directory in your PATH to be run anywhere
-
-```sh
-~$ mkdir ~/bin 
-~$ PATH="$HOME/bin:$PATH"
-~$ mv gitlocalstats ~/bin/gitlocalstats
-~$ alias gls="gitlocalstats"
-~$ gls
-```
+A high-performance local contribution graph for Git and Jujutsu (jj), written in Rust. It scans your local repositories and visualizes your commit history over the last 6 months directly in the terminal.
 
 ![demo](screenshots/demo.png)
+
+## Installation & Building
+
+Ensure you have [Rust](https://www.rust-lang.org/) installed.
+
+```sh
+# Clone and build
+git clone https://github.com/jonaylor89/gitlocalstats.git
+cd gitlocalstats
+cargo build --release
+
+# Run
+./target/release/gitlocalstats --folder ~/Repos
+```
+
+## Usage
+
+### CLI Arguments
+
+```sh
+gitlocalstats --folder <PATH> --email <EMAIL>
+```
+
+- `--folder`: The root directory to recursively scan for repositories.
+- `--email`: Your email address to filter commits. Defaults to your global git config email.
+
+### Configuration
+
+The app loads defaults from `~/.config/gitlocalstats/config`:
+
+```ini
+folder=/Users/name/Repos
+email=name@example.com
+```
+
+## Features
+
+- **Fast**: Parallel directory scanning using `rayon`.
+- **Git & Jujutsu**: Supports both standard Git and the new Jujutsu VCS.
+- **Dependency Lite**: Optimized for fast compilation and small binary size.
+- **Beautiful**: ANSI-colored contribution graph in your terminal.
