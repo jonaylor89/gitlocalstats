@@ -40,7 +40,7 @@ fn main() -> anyhow::Result<()> {
     let home_dir = user_dirs.home_dir();
     let config_dir = home_dir.join(".config").join("gitlocalstats");
     let config_path = config_dir.join("config");
-    
+
     // Cache setup
     let cache_dir = home_dir.join(".cache").join("gitlocalstats");
     let cache_path = cache_dir.join("repos.json");

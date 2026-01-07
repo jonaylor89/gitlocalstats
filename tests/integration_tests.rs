@@ -20,17 +20,18 @@ fn test_cli_integration() -> Result<(), Box<dyn std::error::Error>> {
         .args(&["config", "user.email", email])
         .current_dir(&repo_path)
         .output()?;
-        StdCommand::new("git")
-            .args(&["config", "user.name", "Test User"])
-            .current_dir(&repo_path)
-            .output()?;
-            
-        StdCommand::new("git")
-            .args(&["config", "commit.gpgsign", "false"])
-            .current_dir(&repo_path)
-            .output()?;
-        
-        std::fs::write(repo_path.join("README.md"), "# Test")?;    StdCommand::new("git")
+    StdCommand::new("git")
+        .args(&["config", "user.name", "Test User"])
+        .current_dir(&repo_path)
+        .output()?;
+
+    StdCommand::new("git")
+        .args(&["config", "commit.gpgsign", "false"])
+        .current_dir(&repo_path)
+        .output()?;
+
+    std::fs::write(repo_path.join("README.md"), "# Test")?;
+    StdCommand::new("git")
         .args(&["add", "."])
         .current_dir(&repo_path)
         .output()?;
@@ -40,7 +41,6 @@ fn test_cli_integration() -> Result<(), Box<dyn std::error::Error>> {
         .output()?;
 
     let mut cmd = Command::new(cargo::cargo_bin!("gitlocalstats"));
-
 
     cmd.arg("--folder")
         .arg(dir.path())

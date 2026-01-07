@@ -1,19 +1,20 @@
 use ignore::WalkBuilder;
 use std::collections::HashSet;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use std::fs::File;
 use std::io::BufReader;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 pub fn scan(root: &str, cache_file: Option<&PathBuf>) -> Vec<PathBuf> {
     if let Some(path) = cache_file
         && path.exists()
-             && let Ok(file) = File::open(path) {
-                 let reader = BufReader::new(file);
-                 if let Ok(repos) = serde_json::from_reader::<_, Vec<PathBuf>>(reader) {
-                     return repos;
-                 }
-             }
+        && let Ok(file) = File::open(path)
+    {
+        let reader = BufReader::new(file);
+        if let Ok(repos) = serde_json::from_reader::<_, Vec<PathBuf>>(reader) {
+            return repos;
+        }
+    }
 
     let repos = Arc::new(Mutex::new(HashSet::new()));
     let repos_clone = repos.clone();
@@ -30,9 +31,10 @@ pub fn scan(root: &str, cache_file: Option<&PathBuf>) -> Vec<PathBuf> {
             Box::new(move |entry| {
                 if let Ok(entry) = entry
                     && is_repo_marker(entry.file_name().to_str().unwrap_or(""), entry.file_type())
-                        && let Some(parent) = entry.path().parent() {
-                            repos.lock().unwrap().insert(parent.to_path_buf());
-                        }
+                    && let Some(parent) = entry.path().parent()
+                {
+                    repos.lock().unwrap().insert(parent.to_path_buf());
+                }
                 ignore::WalkState::Continue
             })
         });
@@ -73,7 +75,7 @@ mod tests {
         fs::create_dir(&repo_dir).unwrap();
         fs::create_dir(repo_dir.join(".git")).unwrap();
 
-        let found = scan(dir.path().to_str().unwrap());
+        let found = scan(dir.path().to_str().unwrap(), None);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0], repo_dir);
     }
@@ -85,7 +87,7 @@ mod tests {
         fs::create_dir(&repo_dir).unwrap();
         fs::create_dir(repo_dir.join(".jj")).unwrap();
 
-        let found = scan(dir.path().to_str().unwrap());
+        let found = scan(dir.path().to_str().unwrap(), None);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0], repo_dir);
     }
@@ -98,7 +100,7 @@ mod tests {
         fs::create_dir(repo_dir.join(".git")).unwrap();
         fs::create_dir(repo_dir.join(".jj")).unwrap();
 
-        let found = scan(dir.path().to_str().unwrap());
+        let found = scan(dir.path().to_str().unwrap(), None);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0], repo_dir);
     }
@@ -112,7 +114,7 @@ mod tests {
         let sub_git = node_dir.join("dep").join(".git");
         fs::create_dir_all(&sub_git).unwrap();
 
-        let found = scan(dir.path().to_str().unwrap());
+        let found = scan(dir.path().to_str().unwrap(), None);
         assert_eq!(found.len(), 0);
     }
 
@@ -124,7 +126,7 @@ mod tests {
         let sub_git = vendor_dir.join("dep").join(".git");
         fs::create_dir_all(&sub_git).unwrap();
 
-        let found = scan(dir.path().to_str().unwrap());
+        let found = scan(dir.path().to_str().unwrap(), None);
         assert_eq!(found.len(), 0);
     }
 }

@@ -21,61 +21,57 @@ pub fn process_repositories(repos: Vec<PathBuf>, email: &str) -> CommitCounts {
 
     repos
         .par_iter()
-        .fold(
-            HashMap::new,
-            |mut acc: CommitCounts, path| {
-                let mut repo_commits = HashMap::new();
+        .fold(HashMap::new, |mut acc: CommitCounts, path| {
+            let mut repo_commits = HashMap::new();
 
-                // Detect repo type
-                let git_dir = path.join(".git");
-                let jj_dir = path.join(".jj");
+            // Detect repo type
+            let git_dir = path.join(".git");
+            let jj_dir = path.join(".jj");
 
-                let six_months_ago = std::time::SystemTime::now()
-                    .checked_sub(std::time::Duration::from_secs(
-                        DAYS_IN_LAST_SIX_MONTHS as u64 * 24 * 60 * 60,
-                    ))
-                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            let six_months_ago = std::time::SystemTime::now()
+                .checked_sub(std::time::Duration::from_secs(
+                    DAYS_IN_LAST_SIX_MONTHS as u64 * 24 * 60 * 60,
+                ))
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
 
-                if git_dir.exists() {
-                    // Optimization: Check if HEAD has been modified recently
-                    if let Ok(metadata) = std::fs::metadata(git_dir.join("HEAD"))
-                        && let Ok(mtime) = metadata.modified()
-                            && mtime < six_months_ago {
-                                return acc; // Skip stale repo
-                            }
-
-                    if let Err(_e) = process_git(path, &email_bytes, &mut repo_commits) {
-                        // Silently ignore errors
-                    }
-                } else if jj_dir.exists() {
-                    // Optimization for JJ
-                    if let Ok(metadata) = std::fs::metadata(&jj_dir)
-                        && let Ok(mtime) = metadata.modified()
-                            && mtime < six_months_ago {
-                                return acc;
-                            }
-
-                    if process_jj(path, email, &mut repo_commits).is_err() {
-                        // Silently ignore errors
-                    }
+            if git_dir.exists() {
+                // Optimization: Check if HEAD has been modified recently
+                if let Ok(metadata) = std::fs::metadata(git_dir.join("HEAD"))
+                    && let Ok(mtime) = metadata.modified()
+                    && mtime < six_months_ago
+                {
+                    return acc; // Skip stale repo
                 }
 
-                // Merge local repo stats into the fold accumulator
-                for (date, count) in repo_commits {
-                    *acc.entry(date).or_insert(0) += count;
+                if let Err(_e) = process_git(path, &email_bytes, &mut repo_commits) {
+                    // Silently ignore errors
                 }
-                acc
-            },
-        )
-        .reduce(
-            HashMap::new,
-            |mut a, b| {
-                for (date, count) in b {
-                    *a.entry(date).or_insert(0) += count;
+            } else if jj_dir.exists() {
+                // Optimization for JJ
+                if let Ok(metadata) = std::fs::metadata(&jj_dir)
+                    && let Ok(mtime) = metadata.modified()
+                    && mtime < six_months_ago
+                {
+                    return acc;
                 }
-                a
-            },
-        )
+
+                if process_jj(path, email, &mut repo_commits).is_err() {
+                    // Silently ignore errors
+                }
+            }
+
+            // Merge local repo stats into the fold accumulator
+            for (date, count) in repo_commits {
+                *acc.entry(date).or_insert(0) += count;
+            }
+            acc
+        })
+        .reduce(HashMap::new, |mut a, b| {
+            for (date, count) in b {
+                *a.entry(date).or_insert(0) += count;
+            }
+            a
+        })
 }
 
 fn process_git(path: &Path, email: &[u8], commits: &mut CommitCounts) -> Result<()> {
@@ -141,186 +137,115 @@ mod tests {
 
         let email = "test@example.com";
 
-                // Setup git repo using CLI for simplicity and control over timestamps if needed
+        // Setup git repo using CLI for simplicity and control over timestamps if needed
 
-                let status = std::process::Command::new("git")
+        let status = std::process::Command::new("git")
+            .arg("init")
+            .current_dir(&repo_path)
+            .status()?;
 
-                    .arg("init")
+        assert!(status.success(), "git init failed");
 
-                    .current_dir(&repo_path)
+        let status = std::process::Command::new("git")
+            .args(&["config", "user.email", email])
+            .current_dir(&repo_path)
+            .status()?;
 
-                    .status()?;
+        assert!(status.success(), "git config email failed");
 
-                assert!(status.success(), "git init failed");
+        let status = std::process::Command::new("git")
+            .args(&["config", "user.name", "Test User"])
+            .current_dir(&repo_path)
+            .status()?;
 
-                
+        assert!(status.success(), "git config name failed");
 
-                let status = std::process::Command::new("git")
+        let status = std::process::Command::new("git")
+            .args(&["config", "commit.gpgsign", "false"])
+            .current_dir(&repo_path)
+            .status()?;
 
-                    .args(&["config", "user.email", email])
+        assert!(status.success(), "git config gpg failed");
 
-                    .current_dir(&repo_path)
+        // Commit "today"
 
-                    .status()?;
+        std::fs::write(repo_path.join("file"), "content")?;
 
-                assert!(status.success(), "git config email failed");
+        let status = std::process::Command::new("git")
+            .args(&["add", "file"])
+            .current_dir(&repo_path)
+            .status()?;
 
-                    
+        assert!(status.success(), "git add failed");
 
-                let status = std::process::Command::new("git")
+        let output = std::process::Command::new("git")
+            .args(&["commit", "-m", "msg"])
+            .current_dir(&repo_path)
+            .output()?;
 
-                    .args(&["config", "user.name", "Test User"])
+        if !output.status.success() {
+            panic!(
+                "Commit failed: {:?}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
 
-                    .current_dir(&repo_path)
+        let repos = vec![repo_path];
+        let stats = process_repositories(repos, email);
 
-                    .status()?;
+        let today = Utc::now().date_naive();
+        assert_eq!(stats.get(&today), Some(&1));
 
-                assert!(status.success(), "git config name failed");
+        Ok(())
+    }
+}
 
-        
+fn process_jj(path: &Path, email: &str, commits: &mut CommitCounts) -> Result<()> {
+    use std::process::Command;
 
-                let status = std::process::Command::new("git")
+    // Use a specific date format: YYYY-MM-DD
 
-                    .args(&["config", "commit.gpgsign", "false"])
+    let output = Command::new("jj")
+        .arg("log")
+        .arg("--no-graph")
+        .arg("-r")
+        .arg("::@") // Ancestors of HEAD
+        .arg("-T")
+        .arg(r#"author.email() ++ "|" ++ author.timestamp().format("%Y-%m-%d") ++ "\n""#)
+        .current_dir(path)
+        .output()?;
 
-                    .current_dir(&repo_path)
+    if !output.status.success() {
+        return Err(anyhow!("jj command failed"));
+    }
 
-                    .status()?;
+    let stdout = String::from_utf8(output.stdout)?;
 
-                assert!(status.success(), "git config gpg failed");
+    let cutoff_date = (Utc::now() - Duration::days(DAYS_IN_LAST_SIX_MONTHS)).date_naive();
 
-        
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split('|').collect();
 
-                // Commit "today"
+        if parts.len() < 2 {
+            continue;
+        }
 
-                std::fs::write(repo_path.join("file"), "content")?;
+        let commit_email = parts[0].trim();
 
-                let status = std::process::Command::new("git")
+        let date_str = parts[1].trim();
 
-                    .args(&["add", "file"])
+        if commit_email != email {
+            continue;
+        }
 
-                    .current_dir(&repo_path)
+        match NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+            Ok(date) if date >= cutoff_date => {
+                *commits.entry(date).or_insert(0) += 1;
+            }
 
-                    .status()?;
+            _ => {}
+        }
+    }
 
-                assert!(status.success(), "git add failed");
-
-                
-
-                let output = std::process::Command::new("git")
-
-                    .args(&["commit", "-m", "msg"])
-
-                    .current_dir(&repo_path)
-
-                    .output()?;
-
-                    
-
-                if !output.status.success() {
-
-                     panic!("Commit failed: {:?}", String::from_utf8_lossy(&output.stderr));
-
-                }
-        
-                        let repos = vec![repo_path];
-                        let stats = process_repositories(repos, email);
-                        
-                        let today = Utc::now().date_naive();
-                        assert_eq!(stats.get(&today), Some(&1));
-                        
-                                Ok(())
-                        
-                            }
-                        
-                        }
-                        
-                        
-                        
-                        fn process_jj(path: &Path, email: &str, commits: &mut CommitCounts) -> Result<()> {
-                        
-                            use std::process::Command;
-                        
-                        
-                        
-                            // Use a specific date format: YYYY-MM-DD
-                        
-                            let output = Command::new("jj")
-                        
-                                .arg("log")
-                        
-                                .arg("--no-graph")
-                        
-                                .arg("-r")
-                        
-                                .arg("::@") // Ancestors of HEAD
-                        
-                                .arg("-T")
-                        
-                                .arg(r#"author.email() ++ "|" ++ author.timestamp().format("%Y-%m-%d") ++ "\n""#)
-                        
-                                .current_dir(path)
-                        
-                                .output()?;
-                        
-                        
-                        
-                            if !output.status.success() {
-                        
-                                return Err(anyhow!("jj command failed"));
-                        
-                            }
-                        
-                        
-                        
-                            let stdout = String::from_utf8(output.stdout)?;
-                        
-                            let cutoff_date = (Utc::now() - Duration::days(DAYS_IN_LAST_SIX_MONTHS)).date_naive();
-                        
-                        
-                        
-                            for line in stdout.lines() {
-                        
-                                let parts: Vec<&str> = line.split('|').collect();
-                        
-                                if parts.len() < 2 {
-                        
-                                    continue;
-                        
-                                }
-                        
-                        
-                        
-                                let commit_email = parts[0].trim();
-                        
-                                let date_str = parts[1].trim();
-                        
-                        
-                        
-                                if commit_email != email {
-                        
-                                    continue;
-                        
-                                }
-                        
-                        
-                        
-                                match NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
-                        
-                                    Ok(date) if date >= cutoff_date => {
-                        
-                                        *commits.entry(date).or_insert(0) += 1;
-                        
-                                    }
-                        
-                                    _ => {}
-                        
-                                }
-                        
-                            }
-                        
-                        
-                        
-                            Ok(())
-                        
-                        }
+    Ok(())
+}
