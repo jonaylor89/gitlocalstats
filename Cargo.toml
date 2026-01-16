@@ -1,6 +1,6 @@
 [package]
 name = "gitlocalstats"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 authors = ["Johannes Naylor <jonaylor89@gmail.com>"]
 license = "MIT"
